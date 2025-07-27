@@ -25,7 +25,7 @@ class TestUserTransformer(unittest.TestCase):
                 "lastSuccessfulSignInRequestId": "req-abcde"
             }
         }
-        
+
         expected_output = {
             "Id": "12345-abcde-67890",
             "external_id": "ext-12345",
@@ -50,9 +50,9 @@ class TestUserTransformer(unittest.TestCase):
                 }
             }
         }
-        
+
         result = self.transformer.transform(input_user)
-        
+
         # Assert the complete transformation
         self.assertEqual(result["Id"], expected_output["Id"])
         self.assertEqual(result["external_id"], expected_output["external_id"])
@@ -70,9 +70,9 @@ class TestUserTransformer(unittest.TestCase):
             "id": "12345",
             "mail": "test@example.com"
         }
-        
+
         result = self.transformer.transform(input_user)
-        
+
         # Should generate a UUID for external_id
         self.assertIsNotNone(result["external_id"])
         self.assertIsInstance(result["external_id"], str)
@@ -91,7 +91,7 @@ class TestUserTransformer(unittest.TestCase):
             "surname": None,
             "signInActivity": None
         }
-        
+
         expected_output = {
             "Id": "12345",
             "mail": None,
@@ -102,9 +102,9 @@ class TestUserTransformer(unittest.TestCase):
             "last_name": None,
             "signInActivity": None
         }
-        
+
         result = self.transformer.transform(input_user)
-        
+
         self.assertEqual(result["Id"], expected_output["Id"])
         self.assertEqual(result["mail"], expected_output["mail"])
         self.assertEqual(result["type"], expected_output["type"])
@@ -119,9 +119,9 @@ class TestUserTransformer(unittest.TestCase):
         input_user = {
             "id": "12345"
         }
-        
+
         result = self.transformer.transform(input_user)
-        
+
         self.assertEqual(result["Id"], "12345")
         self.assertIsNotNone(result["external_id"])  # Generated UUID
         self.assertIsNone(result["mail"])
@@ -135,9 +135,9 @@ class TestUserTransformer(unittest.TestCase):
     def test_empty_user_object(self):
         """Given empty user object, should return user with None values and generated external_id"""
         input_user = {}
-        
+
         result = self.transformer.transform(input_user)
-        
+
         self.assertIsNone(result["Id"])
         self.assertIsNotNone(result["external_id"])  # Generated UUID
         self.assertIsNone(result["mail"])
@@ -158,7 +158,7 @@ class TestUserTransformer(unittest.TestCase):
                 # Missing non-interactive and successful sign-in data
             }
         }
-        
+
         expected_sign_in_activity = {
             "lastSignIn": {
                 "dateTime": "2023-10-01T12:00:00Z",
@@ -173,9 +173,9 @@ class TestUserTransformer(unittest.TestCase):
                 "requestId": None
             }
         }
-        
+
         result = self.transformer.transform(input_user)
-        
+
         self.assertEqual(result["signInActivity"], expected_sign_in_activity)
 
     def test_signInActivity_with_null_value(self):
@@ -199,16 +199,16 @@ class TestUserTransformer(unittest.TestCase):
             (1, 1),  # Numeric values should be preserved as-is
             (0, 0)
         ]
-        
+
         for input_value, expected_value in test_cases:
             with self.subTest(input_value=input_value):
                 input_user = {
                     "id": "12345",
                     "accountEnabled": input_value
                 }
-                
+
                 result = self.transformer.transform(input_user)
-                
+
                 self.assertEqual(result["is_enabled"], expected_value)
 
     def test_field_mapping_correctness(self):
@@ -220,16 +220,16 @@ class TestUserTransformer(unittest.TestCase):
             "givenName": "Jane",
             "surname": "Smith"
         }
-        
+
         result = self.transformer.transform(input_user)
-        
+
         # Verify field name mapping
         self.assertEqual(result["type"], "Guest")
         self.assertEqual(result["location"], "CA")
         self.assertEqual(result["is_enabled"], False)
         self.assertEqual(result["first_name"], "Jane")
         self.assertEqual(result["last_name"], "Smith")
-        
+
         # Verify original field names are not present
         self.assertNotIn("userType", result)
         self.assertNotIn("usageLocation", result)

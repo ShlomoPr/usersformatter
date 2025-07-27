@@ -10,12 +10,12 @@
 
 2. Install requirements:
    ```bash
-   pip install ijson
+   pip install ijson aiofiles
    ```
 
 3. Ensure your JSON files are in the `usersapi` directory. The application will automatically process all `.json` files in this directory.
 
-4. Run the transformation:
+4. Run the transformation (now uses asyncio):
    ```bash
    python main.py
    ```
@@ -33,7 +33,7 @@ The application expects JSON files in Microsoft Graph API OData format:
         {
             "userPrincipalName": "user@example.com",
             "usageLocation": "US",
-            "mail": "user@example.com",
+            "mail": "user@example.com"
             // ... other user fields
         }
     ]
@@ -47,9 +47,12 @@ You can customize the processing behavior by modifying the parameters in `main.p
 - **input_directory**: Change the directory containing input JSON files (default: "usersapi")
 - **chunk_size**: Adjust the number of users processed in each parallel batch (default: 100)
 - **output_dir**: Change the output directory name (default: "transformed_users"). Each file in this directory will contain 100 users.
+- **max_concurrent_files**: Limit the number of files processed in parallel (default: 2). This is important for systems with limited CPU cores or memory, as processing too many files at once can overwhelm the machine and degrade performance. Adjust this value based on your system's capabilities.
 
 ```python
-process_users("usersapi", "transformed_users", chunk_size=50)
+# Example usage
+import asyncio
+asyncio.run(process_users("usersapi", "transformed_users", chunk_size=50, max_concurrent_files=4))
 ```
 
 ## File Processing
@@ -66,11 +69,14 @@ The application will:
 - **Memory-Efficient Processing**: Uses chunked processing to handle large datasets without loading everything into memory at once.
 - **Multi-File Support**: Processes multiple JSON files from a directory automatically
 - **Streaming Architecture**: 
-  - **Input**: Uses `ijson` to stream JSON data from OData format files, processing one user at a time
-  - **Processing**: Processes users in configurable chunks with parallel execution within each file
-  - **Output**: Streams transformed results directly to multiple batch files (100 users per file) in the output directory, without intermediate storage
-- **Concurrency**: Uses ThreadPoolExecutor for parallel transformation within each chunk.
+  - **Input**: Uses `ijson` to stream JSON data from OData format files, processing one user at a time (with async wrapper for compatibility)
+  - **Processing**: Processes users in configurable chunks with parallel execution within each file using `asyncio`
+  - **Output**: Streams transformed results directly to multiple batch files (100 users per file) in the output directory, without intermediate storage, using async IO
+- **Concurrency**: 
+  - The number of concurrently processed files is limited by `max_concurrent_files` using an `asyncio.Semaphore`. This prevents overloading systems with limited CPU or memory.
+  - Within each file, user transformation is parallelized using `asyncio.get_running_loop().run_in_executor`, which offloads CPU-bound transformation tasks to threads managed by Python's default thread pool. This replaces the previous use of `ThreadPoolExecutor` and is fully integrated with the asyncio event loop.
 - **Modular Design**: Separation of concerns between reading, transforming, and writing data for easy extensibility.
+- **Async IO**: All file operations are performed asynchronously for maximum performance.
 
 ## Data Transformation Decisions
 
@@ -131,14 +137,14 @@ The transformer also handles proper field mapping from Microsoft Graph API names
 
 The application automatically handles Microsoft Graph API OData format:
 
-- **Input**: Reads from the `value` array within OData wrapped JSON files
+- **Input**: Reads from the `value` array within OData wrapped JSON files using streaming and async IO
 - **Output**: Produces a clean JSON array without OData metadata
 - **Streaming**: Processes the `value` array incrementally without loading entire files
 
 ## Performance Characteristics
 
 - **Memory Usage**: Constant memory usage regardless of input file size or number of files (controlled by chunk_size)
-- **Processing Speed**: Parallel processing within chunks for optimal CPU utilization
+- **Processing Speed**: Parallel processing within chunks for optimal CPU utilization using asyncio and thread pool offloading
 - **Scalability**: Can handle arbitrarily large input files and multiple files without memory constraints
 - **Multi-File Efficiency**: Processes files sequentially while maintaining memory efficiency within each file
 
@@ -151,32 +157,29 @@ The application automatically handles Microsoft Graph API OData format:
 ## How to Add More Transformation Logic
 
 To add more transformation logic:
-1. Extend the `UserTransformer` class in `transformer.py`.
-2. Add new methods for custom transformations.
-3. Call these methods from within the `transform` method as needed.
+1. Create a new transformer class that inherits from `BaseTransformer` in `transformer.py`.
+2. Implement the `transform(self, user)` method.
+3. Pass your transformer instance to the processing pipeline.
 
 Example:
-
 ```python
-class UserTransformer:
-    def transform(self, user):
-        return {
-            "Id": user.get("id"),
-            # ... other fields ...
-            "custom_field": self.transform_custom_field(user.get("custom_field"))
-        }
+from transformer import BaseTransformer
 
-    def transform_custom_field(self, value):
-        # Your custom logic here
-        return value
+class CustomTransformer(BaseTransformer):
+    def transform(self, user):
+        # Custom transformation logic
+        return {...}
+
+# Use your transformer in the pipeline
+transformer = CustomTransformer()
 ```
 
 ## Memory Efficiency Details
 
 The current implementation uses a three-stage streaming pipeline for each file:
 
-1. **Read Stream**: `read_json_stream()` yields users one at a time from each OData JSON file
-2. **Transform Stream**: Users are processed in chunks with parallel execution, then yielded individually
-3. **Write Stream**: `write_json_stream()` consumes the transformed users and writes them directly to the output file
+1. **Read Stream**: `aread_json_stream()` yields users one at a time from each OData JSON file using async IO and streaming
+2. **Transform Stream**: Users are processed in chunks with parallel execution using asyncio and thread pool offloading, then yielded individually
+3. **Write Stream**: `write_json_stream()` consumes the transformed users and writes them directly to the output file using async IO
 
 This approach ensures that memory usage remains constant regardless of input file size or number of files, making it suitable for processing very large datasets distributed across multiple files.

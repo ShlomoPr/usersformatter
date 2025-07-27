@@ -1,7 +1,14 @@
+from abc import ABC, abstractmethod
 import uuid
 from datetime import datetime
 
-class UserTransformer:
+class BaseTransformer(ABC):
+    @abstractmethod
+    def transform(self, user):
+        """Transform a user record. Must be implemented by subclasses."""
+        pass
+
+class UserTransformer(BaseTransformer):
     def transform(self, user):
         return {
             "Id": user.get("id"),
@@ -19,7 +26,7 @@ class UserTransformer:
         """Transform sign-in activity to a cleaner structure."""
         if not activity:
             return None
-            
+
         return {
             "lastSignIn": {
                 "dateTime": activity.get("lastSignInDateTime"),

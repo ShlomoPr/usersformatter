@@ -1,14 +1,14 @@
 from transformer import UserTransformer
-from io_utils import read_json_stream, write_batches
-from concurrent.futures import ThreadPoolExecutor
-import itertools
+from io_utils import aread_json_stream, write_batches
+import asyncio
 import os
 import glob
 
-def process_users(input_directory, output_dir, chunk_size=100):
+async def process_users(input_directory, output_dir, chunk_size=100, max_concurrent_files=2):
     """
     Processes user data from multiple JSON files.
     Writes every 100 transformed users to a separate JSON file in output_dir.
+    Limits the number of concurrently processed files with max_concurrent_files.
     """
     transformer = UserTransformer()
     file_errors = []
@@ -17,48 +17,74 @@ def process_users(input_directory, output_dir, chunk_size=100):
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
 
-    def transformed_users_generator():
-        # Find all JSON files in the input directory
-        json_files = glob.glob(os.path.join(input_directory, "*.json"))
-        json_files.sort()
-        print(f"Processing {len(json_files)} JSON files from {input_directory}")
-
-        for file_path in json_files:
+    async def process_file(file_path, semaphore, results):
+        # Process a single file, respecting the concurrency limit.
+        async with semaphore:
             try:
-                # Stream users from each file
+                # Stream users from each file asynchronously
                 print(f"Processing file: {os.path.basename(file_path)}")
-                users = read_json_stream(file_path)
+                users = aread_json_stream(file_path)
             except Exception as e:
                 # Record and skip files that fail to read
                 file_errors.append((file_path, f"Read error: {e}"))
-                continue
+                return
 
             file_failed = False
             file_results = []
 
             while True:
                 # Read users in chunks for parallel transformation
-                chunk = list(itertools.islice(users, chunk_size))
+                chunk = []
+                try:
+                    async for user in users:
+                        chunk.append(user)
+                        if len(chunk) == chunk_size:
+                            break
+                except Exception as e:
+                    # Record and skip files that fail to read a chunk
+                    file_errors.append((file_path, f"Chunk read error: {e}"))
+                    file_failed = True
+                    break
+
                 if not chunk:
                     break
 
                 try:
-                    # Transform users in parallel using ThreadPoolExecutor
-                    chunk_results = list(ThreadPoolExecutor().map(transformer.transform, chunk))
+                    # Transform users in parallel
+                    loop = asyncio.get_running_loop()
+                    chunk_results = await asyncio.gather(
+                        *(loop.run_in_executor(None, transformer.transform, user) for user in chunk)
+                    )
                     file_results.extend(chunk_results)
                 except Exception as e:
-                    # Record and skip files that fail to transform
+                    # Record and skip files that fail to transform a chunk
                     file_errors.append((file_path, f"Chunk transform error: {e}"))
                     file_failed = True
                     break
 
             if not file_failed:
-                # Yield transformed users from successfully processed files
-                yield from file_results
+                # Collect transformed users from successfully processed files
+                results.extend(file_results)
+
+    async def transformed_users_generator():
+        # Find all JSON files in the input directory
+        json_files = glob.glob(os.path.join(input_directory, "*.json"))
+        json_files.sort()
+        print(f"Processing {len(json_files)} JSON files from {input_directory}")
+
+        # Semaphore to limit concurrent file processing
+        semaphore = asyncio.Semaphore(max_concurrent_files)
+        results = []
+        # Launch file processing tasks with concurrency control
+        tasks = [process_file(file_path, semaphore, results) for file_path in json_files]
+        await asyncio.gather(*tasks)
+        # Yield all transformed users
+        for result in results:
+            yield result
 
     try:
-        # Write transformed users in batches to output directory
-        write_batches(output_dir, transformed_users_generator(), chunk_size)
+        # Write transformed users in batches to output directory asynchronously
+        await write_batches(output_dir, transformed_users_generator(), chunk_size)
     except Exception as e:
         raise e
 
@@ -70,7 +96,7 @@ def process_users(input_directory, output_dir, chunk_size=100):
 
 if __name__ == "__main__":
     try:
-        # Run the user processing pipeline
-        process_users("usersapi", "transformed_users")
+        # Run the user processing pipeline asynchronously
+        asyncio.run(process_users("usersapi", "transformed_users"))
     except Exception as e:
         print(f"Fatal error: {e}")
