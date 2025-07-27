@@ -1,16 +1,48 @@
-from transformer import UserTransformer
+from transformer import UserTransformer, BaseTransformer
 from io_utils import aread_json_stream, write_batches
 import asyncio
 import os
 import glob
+import json
+import aiofiles
+
+# Registry for OData context to transformer mapping
+ODATA_TRANSFORMER_MAP = {
+    "users": UserTransformer,
+    # Add more mappings here as needed
+}
+
+def get_transformer_class_from_odata(context: str):
+    """
+    Selects the transformer class based on the OData context string.
+    """
+    if not context:
+        return UserTransformer
+    for key, cls in ODATA_TRANSFORMER_MAP.items():
+        if key in context:
+            return cls
+    return UserTransformer
+
+async def get_odata_context(file_path):
+    """
+    Reads the @odata.context field from the JSON file header asynchronously.
+    """
+    async with aiofiles.open(file_path, "r", encoding="utf-8") as f:
+        # Read a small chunk to parse the header
+        content = await f.read(2048)
+        try:
+            data = json.loads(content)
+            return data.get("@odata.context", "")
+        except Exception:
+            return ""
 
 async def process_users(input_directory, output_dir, chunk_size=100, max_concurrent_files=2):
     """
     Processes user data from multiple JSON files.
     Writes every 100 transformed users to a separate JSON file in output_dir.
     Limits the number of concurrently processed files with max_concurrent_files.
+    Automatically selects the transformer based on the OData context.
     """
-    transformer = UserTransformer()
     file_errors = []
 
     # Ensure output directory exists
@@ -21,8 +53,11 @@ async def process_users(input_directory, output_dir, chunk_size=100, max_concurr
         # Process a single file, respecting the concurrency limit.
         async with semaphore:
             try:
-                # Stream users from each file asynchronously
-                print(f"Processing file: {os.path.basename(file_path)}")
+                # Detect transformer from OData context
+                context = await get_odata_context(file_path)
+                transformer_class = get_transformer_class_from_odata(context)
+                transformer = transformer_class()
+                print(f"Processing file: {os.path.basename(file_path)} with transformer: {transformer_class.__name__}")
                 users = aread_json_stream(file_path)
             except Exception as e:
                 # Record and skip files that fail to read
@@ -50,7 +85,7 @@ async def process_users(input_directory, output_dir, chunk_size=100, max_concurr
                     break
 
                 try:
-                    # Transform users in parallel
+                    # Transform users in parallel using asyncio and thread pool
                     loop = asyncio.get_running_loop()
                     chunk_results = await asyncio.gather(
                         *(loop.run_in_executor(None, transformer.transform, user) for user in chunk)

@@ -77,6 +77,7 @@ The application will:
   - Within each file, user transformation is parallelized using `asyncio.get_running_loop().run_in_executor`, which offloads CPU-bound transformation tasks to threads managed by Python's default thread pool. This replaces the previous use of `ThreadPoolExecutor` and is fully integrated with the asyncio event loop.
 - **Modular Design**: Separation of concerns between reading, transforming, and writing data for easy extensibility.
 - **Async IO**: All file operations are performed asynchronously for maximum performance.
+- **Automatic Transformer Selection**: The transformer is automatically chosen for each file based on the `@odata.context` field in the JSON. This allows the pipeline to support multiple data types and transformation strategies without manual intervention.
 
 ## Data Transformation Decisions
 
@@ -159,7 +160,7 @@ The application automatically handles Microsoft Graph API OData format:
 To add more transformation logic:
 1. Create a new transformer class that inherits from `BaseTransformer` in `transformer.py`.
 2. Implement the `transform(self, user)` method.
-3. Pass your transformer instance to the processing pipeline.
+3. Register your transformer in the ODATA_TRANSFORMER_MAP in `main.py` with the appropriate OData context key.
 
 Example:
 ```python
@@ -170,8 +171,8 @@ class CustomTransformer(BaseTransformer):
         # Custom transformation logic
         return {...}
 
-# Use your transformer in the pipeline
-transformer = CustomTransformer()
+# Register in main.py
+ODATA_TRANSFORMER_MAP["custom"] = CustomTransformer
 ```
 
 ## Memory Efficiency Details
